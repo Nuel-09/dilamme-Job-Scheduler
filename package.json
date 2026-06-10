@@ -1,0 +1,26 @@
+{
+  "name": "hng-stage9-job-scheduler",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:api": "npm run dev -w @scheduler/api",
+    "dev:worker": "npm run dev -w @scheduler/worker",
+    "dev:scheduler": "npm run dev -w @scheduler/scheduler",
+    "dev:web": "npm run dev -w @scheduler/web",
+    "build": "npm run build -w @scheduler/core -w @scheduler/db -w @scheduler/handlers -w @scheduler/api -w @scheduler/worker -w @scheduler/scheduler -w @scheduler/web",
+    "db:generate": "npm run generate -w @scheduler/db",
+    "db:migrate": "npm run migrate -w @scheduler/db",
+    "db:seed": "npm run seed -w @scheduler/db",
+    "benchmark": "npm run benchmark -w @scheduler/core"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0"
+  }
+}

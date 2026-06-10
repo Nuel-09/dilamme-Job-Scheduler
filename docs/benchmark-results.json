@@ -1,0 +1,47 @@
+{
+  "generatedAt": "2026-06-09T20:23:16.189Z",
+  "results": [
+    {
+      "algorithm": "heap",
+      "operation": "insert",
+      "jobCount": 10000,
+      "durationMs": 7,
+      "opsPerSecond": 1428571
+    },
+    {
+      "algorithm": "heap",
+      "operation": "extract_all",
+      "jobCount": 10000,
+      "durationMs": 8,
+      "opsPerSecond": 1250000
+    },
+    {
+      "algorithm": "timing_wheel",
+      "operation": "insert",
+      "jobCount": 10000,
+      "durationMs": 2,
+      "opsPerSecond": 5000000
+    },
+    {
+      "algorithm": "timing_wheel",
+      "operation": "extract_due",
+      "jobCount": 10000,
+      "durationMs": 8,
+      "opsPerSecond": 1250000
+    },
+    {
+      "algorithm": "heap",
+      "operation": "mixed_schedule_priority",
+      "jobCount": 10000,
+      "durationMs": 4,
+      "opsPerSecond": 2500000
+    },
+    {
+      "algorithm": "timing_wheel",
+      "operation": "mixed_schedule_priority",
+      "jobCount": 10000,
+      "durationMs": 1,
+      "opsPerSecond": 10000000
+    }
+  ]
+}
