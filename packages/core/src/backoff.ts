@@ -1,3 +1,4 @@
+// backoff functions for the job scheduler with jitter
 const BASE_DELAYS_MS = [1_000, 5_000, 25_000] as const;
 const JITTER_FACTOR = 0.2;
 

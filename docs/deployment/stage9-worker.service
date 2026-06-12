@@ -1,0 +1,16 @@
+[Unit]
+Description=Stage 9 Job Scheduler Worker
+After=network.target postgresql.service redis.service stage9-scheduler.service
+
+[Service]
+Type=simple
+User=stage9
+WorkingDirectory=/opt/stage9
+ExecStart=/usr/bin/pnpm --filter @scheduler/worker start
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+EnvironmentFile=/opt/stage9/.env
+
+[Install]
+WantedBy=multi-user.target

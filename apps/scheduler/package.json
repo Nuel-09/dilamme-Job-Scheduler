@@ -9,8 +9,8 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "@scheduler/core": "*",
-    "@scheduler/db": "*",
+    "@scheduler/core": "workspace:*",
+    "@scheduler/db": "workspace:*",
     "dotenv": "^16.4.0",
     "pino": "^9.0.0"
   },

@@ -1,22 +1,23 @@
-import 'dotenv/config';
+import '@scheduler/db/load-env';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 import { getBenchmarkReport } from '@scheduler/core';
-import { closeDb, closeRedis } from '@scheduler/db';
+import { closeDb, closeRedis, checkDbConnection, checkRedisConnection } from '@scheduler/db';
 import { jobsRoutes } from './routes/jobs.js';
 import { dashboardRoutes } from './routes/dashboard.js';
 import { dlqRoutes } from './routes/dlq.js';
 import { eventsRoutes } from './routes/events.js';
 
-const PORT = Number(process.env.API_PORT ?? 3200);
-const HOST = process.env.API_HOST ?? '0.0.0.0';
+const PORT = Number(process.env.API_PORT ?? process.env.PORT ?? 3200);
+const HOST = process.env.API_HOST ?? process.env.HOST ?? '0.0.0.0';
 
 const app = Fastify({
   logger: {
     level: process.env.LOG_LEVEL ?? 'info',
   },
+  trustProxy: true,
 });
 
 await app.register(cors, { origin: true });
@@ -56,7 +57,16 @@ app.get('/api/benchmarks', {
   },
 }, async () => getBenchmarkReport());
 
-app.get('/health', async () => ({ status: 'ok' }));
+app.get('/health', async (_request, reply) => {
+  const [db, redis] = await Promise.all([checkDbConnection(), checkRedisConnection()]);
+  const status = db && redis ? 'ok' : 'degraded';
+  const code = db && redis ? 200 : 503;
+  return reply.status(code).send({
+    status,
+    db: db ? 'connected' : 'disconnected',
+    redis: redis ? 'connected' : 'disconnected',
+  });
+});
 
 const shutdown = async () => {
   await app.close();

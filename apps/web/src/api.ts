@@ -12,6 +12,8 @@ export interface Job {
   inDlq: boolean;
   effectivePriority: number;
   cancelRequested: boolean;
+  inReadyQueue: boolean;
+  awaitingRetry: boolean;
   createdAt: string;
   updatedAt: string;
   startedAt: string | null;
@@ -42,6 +44,19 @@ export interface JobEvent {
   timestamp?: string;
 }
 
+export interface JobLog {
+  id: string;
+  event: string;
+  message: string | null;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+export interface JobDetail extends Job {
+  dependsOn?: string[];
+  logs?: JobLog[];
+}
+
 const API = '/api';
 
 export async function fetchStats(): Promise<DashboardStats> {
@@ -60,6 +75,12 @@ export async function fetchJobs(status?: string): Promise<Job[]> {
 export async function fetchDlqJobs(): Promise<Job[]> {
   const res = await fetch(`${API}/dlq`);
   if (!res.ok) throw new Error('Failed to fetch DLQ');
+  return res.json();
+}
+
+export async function fetchJobById(id: string): Promise<JobDetail> {
+  const res = await fetch(`${API}/jobs/${id}`);
+  if (!res.ok) throw new Error('Failed to fetch job');
   return res.json();
 }
 

@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./load-env": {
+      "types": "./dist/load-env.d.ts",
+      "import": "./dist/load-env.js"
     }
   },
   "scripts": {
@@ -18,7 +22,8 @@
     "seed": "tsx src/seed.ts"
   },
   "dependencies": {
-    "@scheduler/core": "*",
+    "@scheduler/core": "workspace:*",
+    "dotenv": "^16.4.0",
     "drizzle-orm": "^0.36.0",
     "ioredis": "^5.4.0",
     "postgres": "^3.4.0"

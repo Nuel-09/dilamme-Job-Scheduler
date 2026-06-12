@@ -6,4 +6,4 @@ dist/
 coverage/
 .vite/
 apps/web/dist/
-docker-compose.yml
+Agent-Skills.md

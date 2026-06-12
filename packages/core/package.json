@@ -14,7 +14,8 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "benchmark": "tsx scripts/benchmark.ts"
+    "benchmark": "tsx scripts/benchmark.ts",
+    "test": "tsx scripts/min-heap-test.ts"
   },
   "devDependencies": {
     "tsx": "^4.19.0",

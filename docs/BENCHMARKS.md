@@ -3,77 +3,49 @@
 Run benchmarks locally:
 
 ```bash
-npm run benchmark
+pnpm benchmark
 ```
 
 Results are printed to stdout and saved to `docs/benchmark-results.json`.
 
 ## Methodology
 
-- **Job count**: 10,000 mock jobs
-- **Heap operations**: insert, extract-all, mixed insert/pop with priority changes
-- **Timing wheel operations**: insert, extract-due after tick, mixed schedule insert
+Three **isolated** scenarios, 10,000 operations each:
 
-Environment: Node.js on local machine. Re-run on your hardware before submission and update the table below.
 
-## Results Template
+| Scenario            | Description                                              |
+| ------------------- | -------------------------------------------------------- |
+| **bulk_insertion**  | Insert 10k jobs with random future execute times         |
+| **bulk_extraction** | Extract all jobs that are now due                        |
+| **mixed_workload**  | 50% insert + 50% extract interleaved; measure throughput |
+| **update_priority_indexed** | O(log n) decrease-key via `IndexedJobHeap` |
+| **update_priority_linear** | O(n) remove + reinsert via plain `JobHeap` |
 
-| Operation                 | Heap (ms) | Timing Wheel (ms) | Notes                              |
-| ------------------------- | --------- | ----------------- | ---------------------------------- |
-| insert 10k                | 7         | 2                 | Timing wheel faster for bulk insert |
-| extract all / due         | 8         | 8                 | Comparable extraction              |
-| mixed schedule + priority | 4         | 1                 | Wheel wins on time-bucketed mix    |
-
-Sample run from `npm run benchmark` on 2026-06-09. Re-run on your machine before submission — see `docs/benchmark-results.json`.
 
 ## Tradeoffs
 
-### Min-Heap (Primary Scheduler)
+> **Heap:** O(log n) insert/extract; strict priority ordering across all ready jobs. `IndexedJobHeap` adds O(log n) priority updates for live aging sync.
+>
+> **Timing Wheel:** O(1) insert for time-bucketed jobs; weaker at cross-bucket priority unless hybridized.
+>
+> The timing wheel is used in production **only for retry delays and recurring intervals** in the worker. Priority ordering is deferred until the scheduler promotes jobs into the heap.
 
-**Pros**
+## Results
 
-- Strict global ordering by priority → scheduled_at → created_at
-- O(log n) insert and extract-min
-- Natural fit for priority queue with aging
+Measured on 2026-06-11 (10,000 operations per scenario):
 
-**Cons**
 
-- Not optimized for time-only scheduling at very large scale
-- Full reorder on priority change (aging) requires re-insert or DB-side ordering
+| Scenario        | Heap (ms) | Timing Wheel (ms) |
+| --------------- | --------- | ----------------- |
+| bulk_insertion  | 7         | 1                 |
+| bulk_extraction | 9         | 8                 |
+| mixed_workload  | 2         | 1                 |
 
-### Timing Wheel (Alternative)
 
-**Pros**
+**Analysis:** The timing wheel is faster for bulk time-bucketed inserts (O(1) per slot). The heap is competitive on extraction and mixed workloads while providing strict three-level priority ordering (effective priority → scheduled_at → created_at). Production uses both: heap for scheduler promotion ordering, timing wheel for worker retry/recurring delays only.
 
-- O(1) insert into time bucket
-- Efficient for delayed/scheduled/retry jobs with known execute times
-- Hierarchical overflow handles delays beyond wheel span
-
-**Cons**
-
-- Weaker cross-bucket priority ordering without hybrid approach
-- Tick-based extraction; granularity tied to slot size (1s default)
-- Mixed priority + time ordering needs extra structure
-
-### Recommendation
-
-Use **heap for dispatch ordering** (worker claims by effective priority) and **timing wheel for scheduled promotion benchmarks**. A hybrid production system can promote from wheel to heap when jobs become due.
+Re-run `pnpm benchmark` on your hardware and update this table from `docs/benchmark-results.json`.
 
 ## API Access
 
-Latest cached benchmark report: `GET /api/benchmarks`
-
-```json
-{
-  "generatedAt": "2026-06-09T...",
-  "results": [
-    {
-      "algorithm": "heap",
-      "operation": "insert",
-      "jobCount": 10000,
-      "durationMs": 12.5,
-      "opsPerSecond": 800000
-    }
-  ]
-}
-```
+`GET /api/benchmarks` returns the latest cached report.

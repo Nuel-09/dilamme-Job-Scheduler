@@ -1,98 +1,126 @@
 # Deployment Guide
 
-Manual deployment to a VPS (no Heroku, Render, Railway, or managed platforms).
+Manual deployment to a VPS (no Heroku, Render, Railway, or managed platforms). Process management uses **systemd only** (no PM2).
 
 ## Prerequisites
 
 - VPS with public IP (DigitalOcean, Hetzner, AWS EC2, etc.)
-- Domain or dynamic DNS hostname (DuckDNS, No-IP)
+- Dynamic DNS hostname (DuckDNS, No-IP)
 - SSH access
+- Node.js 20.x, pnpm, PostgreSQL, Redis, Nginx, Certbot
+
+For local development setup (Windows/Linux/macOS), see [LOCAL-SETUP.md](LOCAL-SETUP.md).
 
 ## 1. Server Setup
 
 ```bash
-# Ubuntu/Debian example
 sudo apt update && sudo apt upgrade -y
-sudo apt install -y nodejs npm nginx certbot python3-certbot-nginx postgresql redis-server git
+sudo apt install -y nginx certbot python3-certbot-nginx postgresql redis-server git
+
+# Node.js 20 via NodeSource, then:
+npm install -g pnpm
 ```
 
-Install Node.js 20+ via [NodeSource](https://github.com/nodesource/distributions) if the default version is too old.
+### PostgreSQL database and user
+
+Create the application role and database (match `.env.example` or your production `.env`):
+
+```bash
+sudo -u postgres psql <<'SQL'
+CREATE USER scheduler WITH PASSWORD 'your-secure-password';
+CREATE DATABASE job_scheduler OWNER scheduler;
+GRANT ALL PRIVILEGES ON DATABASE job_scheduler TO scheduler;
+SQL
+```
+
+Set in `/opt/stage9/.env`:
+
+```
+DATABASE_URL=postgresql://scheduler:your-secure-password@localhost:5432/job_scheduler
+REDIS_URL=redis://localhost:6379
+```
+
+Verify Postgres and Redis:
+
+```bash
+psql -U scheduler -d job_scheduler -h localhost -c "SELECT 1"
+redis-cli ping
+```
+
+### Redis tuning (small VPS)
+
+Optional — limit memory on 1–2 GB VPS:
+
+```bash
+sudo sed -i 's/^# maxmemory .*/maxmemory 64mb/' /etc/redis/redis.conf
+sudo sed -i 's/^# maxmemory-policy .*/maxmemory-policy allkeys-lru/' /etc/redis/redis.conf
+sudo systemctl restart redis-server
+```
 
 ## 2. Dynamic DNS
 
 1. Create a hostname at [DuckDNS](https://www.duckdns.org/) or No-IP
 2. Point it to your server's public IP
-3. Verify: `ping your-hostname.duckdns.org`
+3. Verify: `ping yourdomain.duckdns.net`
+
+> **Note:** Dynamic DNS may take 5–15 minutes to propagate after IP changes. If the URL is unreachable, wait and retry.
 
 ## 3. Clone and Build
 
 ```bash
-git clone <your-repo-url> /opt/job-scheduler
-cd /opt/job-scheduler
-cp .env.example .env
-# Edit .env with production DATABASE_URL, REDIS_URL, etc.
+sudo useradd -r -m -s /bin/bash stage9
+sudo mkdir -p /opt/stage9
+sudo chown stage9:stage9 /opt/stage9
 
-npm install
-npm run build
-npm run db:migrate
+sudo -u stage9 git clone <your-repo-url> /opt/stage9
+cd /opt/stage9
+sudo -u stage9 cp .env.example .env
+# Edit .env with production values
+
+sudo -u stage9 pnpm install
+sudo -u stage9 pnpm build
+sudo -u stage9 pnpm db:migrate
 ```
 
-## 4. PostgreSQL and Redis
+## 4. systemd Services
 
-Configure PostgreSQL for production credentials and update `DATABASE_URL` in `.env`.
-
-Ensure Redis is running: `sudo systemctl enable redis-server`
-
-## 5. systemd Services
-
-Create `/etc/systemd/system/job-scheduler-api.service`:
-
-```ini
-[Unit]
-Description=Job Scheduler API
-After=network.target postgresql.service redis.service
-
-[Service]
-Type=simple
-User=www-data
-WorkingDirectory=/opt/job-scheduler
-EnvironmentFile=/opt/job-scheduler/.env
-ExecStart=/usr/bin/node apps/api/dist/index.js
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Create similar units for:
-
-- `job-scheduler-worker.service` → `apps/worker/dist/index.js`
-- `job-scheduler-scheduler.service` → `apps/scheduler/dist/index.js`
+Copy service files from `docs/deployment/` to `/etc/systemd/system/`:
 
 ```bash
+sudo cp docs/deployment/stage9-api.service /etc/systemd/system/
+sudo cp docs/deployment/stage9-worker.service /etc/systemd/system/
+sudo cp docs/deployment/stage9-scheduler.service /etc/systemd/system/
+
 sudo systemctl daemon-reload
-sudo systemctl enable job-scheduler-api job-scheduler-worker job-scheduler-scheduler
-sudo systemctl start job-scheduler-api job-scheduler-worker job-scheduler-scheduler
+sudo systemctl enable stage9-api stage9-worker stage9-scheduler
+sudo systemctl start stage9-api stage9-worker stage9-scheduler
 ```
 
-## 6. Build and Serve Frontend
+Check status:
 
 ```bash
-cd /opt/job-scheduler/apps/web
-npm run build
+sudo systemctl status stage9-api stage9-worker stage9-scheduler
+sudo journalctl -u stage9-worker -f
+```
+
+## 5. Frontend Build
+
+```bash
+cd /opt/stage9
+sudo -u stage9 pnpm --filter @scheduler/web build
 # Output: apps/web/dist/
 ```
 
-## 7. Nginx Reverse Proxy
+## 6. Nginx Reverse Proxy
 
-Create `/etc/nginx/sites-available/job-scheduler`:
+Create `/etc/nginx/sites-available/stage9`:
 
 ```nginx
 server {
     listen 80;
-    server_name your-hostname.duckdns.org;
+    server_name yourdomain.duckdns.net;
 
-    root /opt/job-scheduler/apps/web/dist;
+    root /opt/stage9/apps/web/dist;
     index index.html;
 
     location / {
@@ -109,12 +137,12 @@ server {
     }
 
     location /api/events {
-        proxy_pass http://127.0.0.1:3000;
+        proxy_pass http://127.0.0.1:3000/api/events;
         proxy_http_version 1.1;
         proxy_set_header Connection '';
         proxy_buffering off;
         proxy_cache off;
-        chunked_transfer_encoding off;
+        proxy_read_timeout 86400;
     }
 
     location /docs {
@@ -124,36 +152,34 @@ server {
 ```
 
 ```bash
-sudo ln -s /etc/nginx/sites-available/job-scheduler /etc/nginx/sites-enabled/
+sudo ln -s /etc/nginx/sites-available/stage9 /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-## 8. HTTPS (Let's Encrypt)
+**Critical:** `proxy_buffering off` on `/api/events` is required for SSE live updates. The API also sends `X-Accel-Buffering: no` as a belt-and-suspenders header.
+
+## 7. HTTPS (Let's Encrypt)
 
 ```bash
-sudo certbot --nginx -d your-hostname.duckdns.org
+sudo apt update
+sudo apt install certbot python3-certbot-nginx
+sudo certbot --nginx -d yourdomain.duckdns.net --non-interactive --agree-tos -m your-email@example.com
+sudo systemctl reload nginx
 ```
 
-Certbot auto-configures HTTPS and HTTP→HTTPS redirect.
+## 8. Health Check
 
-## 9. Submission Checklist
+```bash
+curl https://yourdomain.duckdns.net/health
+# Expected: {"status":"ok","db":"connected","redis":"connected"}
+```
+
+## Submission Checklist
 
 - [ ] GitHub repository URL
-- [ ] Live UI URL (`https://your-hostname.duckdns.org`)
-- [ ] API docs URL (`https://your-hostname.duckdns.org/docs`)
+- [ ] Live UI URL (`https://yourdomain.duckdns.net`)
+- [ ] API docs URL (`https://yourdomain.duckdns.net/docs`)
 - [ ] Architecture doc (`docs/ARCHITECTURE.md`)
-- [ ] Deployed server URL with HTTPS
-- [ ] Nginx reverse proxy configured
+- [ ] Deployed server with HTTPS
+- [ ] Nginx reverse proxy with SSE buffering disabled
 - [ ] Dynamic DNS hostname working
-
-## PM2 Alternative
-
-Instead of systemd:
-
-```bash
-npm install -g pm2
-pm2 start apps/api/dist/index.js --name api
-pm2 start apps/worker/dist/index.js --name worker
-pm2 start apps/scheduler/dist/index.js --name scheduler
-pm2 save && pm2 startup
-```

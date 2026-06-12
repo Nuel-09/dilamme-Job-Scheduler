@@ -1,3 +1,4 @@
+// this file contains the types for the job scheduler
 export type JobStatus =
   | 'pending'
   | 'processing'
@@ -44,10 +45,9 @@ export interface JobEvent {
 
 export const REDIS_CHANNELS = {
   JOB_EVENTS: 'job:events',
-  READY_QUEUE: 'job:ready',
 } as const;
 
-export const DLQ_ALERT_THRESHOLD = 10;
+export const DLQ_ALERT_THRESHOLD = Number(process.env.DLQ_THRESHOLD ?? 10);
 
 export const AGING_INTERVAL_MS = 30_000;
 

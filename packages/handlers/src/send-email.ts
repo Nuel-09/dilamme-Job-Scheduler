@@ -1,3 +1,4 @@
+// email handler for the job scheduler
 import type { Logger } from './registry.js';
 
 export interface JobHandlerContext {
@@ -13,6 +14,9 @@ export interface EmailPayload {
   subject: string;
   body?: string;
 }
+
+/** Track deterministic message IDs for idempotent send_email. */
+const sentMessageIds = new Set<string>();
 
 function validateEmailPayload(payload: Record<string, unknown>): EmailPayload {
   const to = payload.to;
@@ -30,15 +34,30 @@ function validateEmailPayload(payload: Record<string, unknown>): EmailPayload {
   };
 }
 
-/** Simulates SMTP with ~10% random failure rate for demo retries/DLQ. */
+/**
+ * Simulates SMTP with ~10% random failure rate.
+ * Uses jobId as deterministic idempotency key — duplicate invocations skip re-send.
+ */
 export async function sendEmailHandler(ctx: JobHandlerContext): Promise<void> {
   const email = validateEmailPayload(ctx.payload);
+  const messageId = `msg-id-${ctx.jobId}`;
+
+  if (sentMessageIds.has(messageId)) {
+    ctx.logger.info({
+      event: 'handler.send_email.duplicate',
+      jobId: ctx.jobId,
+      messageId,
+      message: `Duplicate send detected for ${messageId}, skipping.`,
+    });
+    return;
+  }
 
   ctx.logger.info({
     event: 'handler.send_email.attempt',
     jobId: ctx.jobId,
     to: email.to,
     subject: email.subject,
+    messageId,
   });
 
   await new Promise((resolve) => setTimeout(resolve, 100 + Math.random() * 200));
@@ -47,12 +66,14 @@ export async function sendEmailHandler(ctx: JobHandlerContext): Promise<void> {
     throw new Error(`SMTP simulation failed: connection reset for ${email.to}`);
   }
 
+  sentMessageIds.add(messageId);
+
   ctx.logger.info({
     event: 'handler.send_email.success',
     jobId: ctx.jobId,
     to: email.to,
     subject: email.subject,
-    messageId: `mock-${ctx.jobId.slice(0, 8)}`,
+    messageId,
   });
 }
 
@@ -86,4 +107,9 @@ export async function sendDlqAlertHandler(ctx: JobHandlerContext): Promise<void>
     threshold,
     adminEmail: ctx.payload.adminEmail,
   });
+}
+
+/** Test helper — reset idempotency cache between test runs. */
+export function resetSendEmailIdempotencyCache(): void {
+  sentMessageIds.clear();
 }

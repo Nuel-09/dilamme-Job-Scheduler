@@ -40,7 +40,8 @@ export class TimingWheel<T> {
   }
 
   tick(now = Date.now()): T[] {
-    const elapsedTicks = Math.floor((now - this.currentTime) / this.tickMs);
+    const rawTicks = Math.floor((now - this.currentTime) / this.tickMs);
+    const elapsedTicks = Math.min(rawTicks, this.slotCount);
     if (elapsedTicks <= 0) return [];
 
     const due: T[] = [];
@@ -75,7 +76,7 @@ export class TimingWheel<T> {
     this.overflow = [];
   }
 
-  private promoteOverflow(now: number): void {
+  private promoteOverflow(_now: number): void {
     const remaining: WheelEntry<T>[] = [];
     for (const entry of this.overflow) {
       const delay = entry.executeAt - this.currentTime;

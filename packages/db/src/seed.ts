@@ -1,3 +1,4 @@
+import './load-env.js';
 import { createJob, getDb } from './index.js';
 import { closeDb } from './client.js';
 

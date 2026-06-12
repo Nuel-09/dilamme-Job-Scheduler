@@ -43,6 +43,8 @@ export const jobs = pgTable(
     effectivePriority: integer('effective_priority').notNull().default(2),
     cancelRequested: boolean('cancel_requested').notNull().default(false),
     inReadyQueue: boolean('in_ready_queue').notNull().default(false),
+    awaitingRetry: boolean('awaiting_retry').notNull().default(false),
+    lastPromotedAt: timestamp('last_promoted_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
     startedAt: timestamp('started_at', { withTimezone: true }),
@@ -53,6 +55,13 @@ export const jobs = pgTable(
     index('jobs_scheduled_at_idx').on(table.scheduledAt),
     index('jobs_in_dlq_idx').on(table.inDlq),
     index('jobs_in_ready_queue_idx').on(table.inReadyQueue),
+    index('idx_jobs_ready').on(
+      table.status,
+      table.scheduledAt,
+      table.effectivePriority,
+      table.createdAt
+    ),
+    index('idx_jobs_dlq').on(table.inDlq, table.status),
   ]
 );
 
@@ -69,6 +78,7 @@ export const jobDependencies = pgTable(
   (table) => [primaryKey({ columns: [table.jobId, table.dependsOnJobId] })]
 );
 
+/** Mandatory audit trail — every status transition writes a row in the same transaction as jobs update. */
 export const jobLogs = pgTable(
   'job_logs',
   {
@@ -76,7 +86,7 @@ export const jobLogs = pgTable(
     jobId: uuid('job_id')
       .notNull()
       .references(() => jobs.id, { onDelete: 'cascade' }),
-    event: varchar('event', { length: 100 }).notNull(),
+    event: varchar('event', { length: 50 }).notNull(),
     message: text('message'),
     metadata: jsonb('metadata').default({}),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

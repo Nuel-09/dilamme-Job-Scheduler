@@ -11,9 +11,10 @@ export async function eventsRoutes(app: FastifyInstance) {
   }, async (request, reply) => {
     reply.raw.writeHead(200, {
       'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
+      'Cache-Control': 'no-cache, no-transform',
       Connection: 'keep-alive',
       'Access-Control-Allow-Origin': '*',
+      'X-Accel-Buffering': 'no',
     });
 
     const subscriber = createRedisClient().duplicate();
@@ -24,7 +25,7 @@ export async function eventsRoutes(app: FastifyInstance) {
       reply.raw.write(`data: ${JSON.stringify(data)}\n\n`);
     };
 
-    send({ type: 'connected', timestamp: new Date().toISOString() });
+    send({ kind: 'connected', timestamp: new Date().toISOString() });
 
     await subscriber.subscribe(REDIS_CHANNELS.JOB_EVENTS);
 
@@ -32,12 +33,12 @@ export async function eventsRoutes(app: FastifyInstance) {
       try {
         send(JSON.parse(message));
       } catch {
-        send({ type: 'error', message: 'Invalid event payload' });
+        send({ kind: 'error', message: 'Invalid event payload' });
       }
     });
 
     const heartbeat = setInterval(() => {
-      send({ type: 'heartbeat', timestamp: new Date().toISOString() });
+      send({ kind: 'heartbeat', timestamp: new Date().toISOString() });
     }, 15_000);
 
     request.raw.on('close', async () => {

@@ -1,5 +1,6 @@
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
+import { sql } from 'drizzle-orm';
 import * as schema from './schema.js';
 
 let client: ReturnType<typeof postgres> | null = null;
@@ -22,6 +23,16 @@ export function getDb() {
     db = created.db;
   }
   return db;
+}
+
+export async function checkDbConnection(): Promise<boolean> {
+  try {
+    const database = getDb();
+    await database.execute(sql`SELECT 1`);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function closeDb() {
