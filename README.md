@@ -30,17 +30,20 @@ PostgreSQL is the source of truth for job storage. Redis is used for distributed
 
 - Node.js 20.x
 - pnpm (`npm install -g pnpm`)
-- PostgreSQL 15+ on `localhost:5432`
-- Redis 7+ on `localhost:6379`
+- PostgreSQL 15+ and Redis 7+ — **Docker (recommended)** or native install
 
-PostgreSQL and Redis run **natively on localhost** (no Docker). See **[docs/LOCAL-SETUP.md](docs/LOCAL-SETUP.md)** for Windows, Linux, and macOS install steps.
-
-Quick check:
+**Docker (fastest):**
 
 ```bash
-psql -U scheduler -d job_scheduler -h localhost -c "SELECT 1"
-redis-cli ping   # → PONG
+pnpm docker:up
+pnpm docker:wait
+cp .env.example .env
+pnpm db:migrate
 ```
+
+See **[docs/DOCKER.md](docs/DOCKER.md)** for the full flow.
+
+**Native Postgres/Redis:** install locally and set `DATABASE_URL` in `.env` (use port `5432`; Docker uses `5433` on Windows if native PG is running).
 
 ### 1. Configure environment
 
@@ -149,7 +152,7 @@ packages/
   db/          Drizzle schema + repositories
   handlers/    Job handler registry
 docs/
-  LOCAL-SETUP.md        Native Postgres + Redis setup
+  DOCKER.md             Docker Postgres + Redis for local dev
   JOB_CREATION_GUIDE.md Standalone, scheduled, DAG, recurring jobs
   ARCHITECTURE.md       Process model, lifecycle, durability
   DEPLOYMENT.md         VPS, Nginx, HTTPS, systemd
@@ -205,7 +208,7 @@ ESLint enforces structured logging — `console.log` is banned in production sou
 
 ## Documentation
 
-- [Local Setup](docs/LOCAL-SETUP.md)
+- [Docker Setup](docs/DOCKER.md)
 - [Job Creation Guide](docs/JOB_CREATION_GUIDE.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Deployment](docs/DEPLOYMENT.md)

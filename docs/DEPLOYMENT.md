@@ -9,7 +9,7 @@ Manual deployment to a VPS (no Heroku, Render, Railway, or managed platforms). P
 - SSH access
 - Node.js 20.x, pnpm, PostgreSQL, Redis, Nginx, Certbot
 
-For local development setup (Windows/Linux/macOS), see [LOCAL-SETUP.md](LOCAL-SETUP.md).
+For local development with Docker, see [DOCKER.md](DOCKER.md).
 
 ## 1. Server Setup
 
