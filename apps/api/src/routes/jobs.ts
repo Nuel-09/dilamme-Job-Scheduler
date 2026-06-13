@@ -36,6 +36,26 @@ const jobSchema = {
   },
 };
 
+const jobLogSchema = {
+  type: 'object',
+  properties: {
+    id: { type: 'string' },
+    event: { type: 'string' },
+    message: { type: 'string', nullable: true },
+    metadata: { type: 'object', nullable: true },
+    createdAt: { type: 'string' },
+  },
+};
+
+const jobDetailSchema = {
+  type: 'object',
+  properties: {
+    ...jobSchema.properties,
+    dependsOn: { type: 'array', items: { type: 'string' } },
+    logs: { type: 'array', items: jobLogSchema },
+  },
+};
+
 function serializeJob(job: Awaited<ReturnType<typeof getJobById>>) {
   if (!job) return null;
   return {
@@ -178,7 +198,7 @@ export async function jobsRoutes(app: FastifyInstance) {
         required: ['id'],
         properties: { id: { type: 'string' } },
       },
-      response: { 200: jobSchema, 404: errorSchema },
+      response: { 200: jobDetailSchema, 404: errorSchema },
     },
   }, async (request, reply) => {
     const { id } = request.params as { id: string };

@@ -13,15 +13,16 @@ import { eventsRoutes } from './routes/events.js';
 const PORT = Number(process.env.API_PORT ?? process.env.PORT ?? 3200);
 const HOST = process.env.API_HOST ?? process.env.HOST ?? '0.0.0.0';
 const LOCAL_API_URL = `http://localhost:${PORT}`;
-const PUBLIC_API_URL = (process.env.PUBLIC_API_URL ?? LOCAL_API_URL).replace(/\/$/, '');
+const PUBLIC_API_URL = process.env.PUBLIC_API_URL?.replace(/\/$/, '');
 
-const swaggerServers =
-  PUBLIC_API_URL === LOCAL_API_URL
-    ? [{ url: LOCAL_API_URL, description: 'Local development' }]
-    : [
-        { url: PUBLIC_API_URL, description: 'Production' },
-        { url: LOCAL_API_URL, description: 'Local development' },
-      ];
+/** Relative "/" resolves to the host serving /docs (Vite :5173, API :3200, or VPS domain). */
+const swaggerServers = [
+  { url: '/', description: 'Current host' },
+  ...(PUBLIC_API_URL && PUBLIC_API_URL !== LOCAL_API_URL
+    ? [{ url: PUBLIC_API_URL, description: 'Production' }]
+    : []),
+  { url: LOCAL_API_URL, description: 'localhost only' },
+];
 
 const app = Fastify({
   logger: {
