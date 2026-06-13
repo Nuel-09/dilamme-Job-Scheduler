@@ -111,11 +111,11 @@ export default function CreateJobPage() {
             <p className="text-xs font-semibold uppercase tracking-wide text-muted">Email payload</p>
             <label className={labelClass}>
               To
-              <input value={to} onChange={(e) => setTo(e.target.value)} required type="email" className={inputClass} />
+              <input value={to} onChange={(e) => setTo(e.target.value)} required type="text" className={inputClass} />
             </label>
             <label className={labelClass}>
               Subject
-              <input value={subject} onChange={(e) => setSubject(e.target.value)} required className={inputClass} />
+              <input value={subject} onChange={(e) => setSubject(e.target.value)} className={inputClass} />
             </label>
             <label className={labelClass}>
               Body

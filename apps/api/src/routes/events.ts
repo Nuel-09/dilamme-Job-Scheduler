@@ -6,6 +6,7 @@ export async function eventsRoutes(app: FastifyInstance) {
   app.get('/', {
     schema: {
       tags: ['Events'],
+      hide: true,
       description: 'Server-Sent Events stream for live job status updates',
     },
   }, async (request, reply) => {

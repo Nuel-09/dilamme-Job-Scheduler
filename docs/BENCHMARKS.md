@@ -13,13 +13,13 @@ Results are printed to stdout and saved to `docs/benchmark-results.json`.
 Three **isolated** scenarios, 10,000 operations each:
 
 
-| Scenario            | Description                                              |
-| ------------------- | -------------------------------------------------------- |
-| **bulk_insertion**  | Insert 10k jobs with random future execute times         |
-| **bulk_extraction** | Extract all jobs that are now due                        |
-| **mixed_workload**  | 50% insert + 50% extract interleaved; measure throughput |
-| **update_priority_indexed** | O(log n) decrease-key via `IndexedJobHeap` |
-| **update_priority_linear** | O(n) remove + reinsert via plain `JobHeap` |
+| Scenario                    | Description                                              |
+| --------------------------- | -------------------------------------------------------- |
+| **bulk_insertion**          | Insert 10k jobs with random future execute times         |
+| **bulk_extraction**         | Extract all jobs that are now due                        |
+| **mixed_workload**          | 50% insert + 50% extract interleaved; measure throughput |
+| **update_priority_indexed** | O(log n) decrease-key via `IndexedJobHeap`               |
+| **update_priority_linear**  | O(n) remove + reinsert via plain `JobHeap`               |
 
 
 ## Tradeoffs
@@ -35,11 +35,11 @@ Three **isolated** scenarios, 10,000 operations each:
 Measured on 2026-06-11 (10,000 operations per scenario):
 
 
-| Scenario        | Heap (ms) | Timing Wheel (ms) |
-| --------------- | --------- | ----------------- |
-| bulk_insertion  | 7         | 1                 |
-| bulk_extraction | 9         | 8                 |
-| mixed_workload  | 2         | 1                 |
+| Scenario        | Heap (ms) |     | Timing Wheel (ms) |
+| --------------- | --------- | --- | ----------------- |
+| bulk_insertion  | 7         | 1   |                   |
+| bulk_extraction | 9         | 8   |                   |
+| mixed_workload  | 2         | 1   |                   |
 
 
 **Analysis:** The timing wheel is faster for bulk time-bucketed inserts (O(1) per slot). The heap is competitive on extraction and mixed workloads while providing strict three-level priority ordering (effective priority → scheduled_at → created_at). Production uses both: heap for scheduler promotion ordering, timing wheel for worker retry/recurring delays only.

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-06-11T17:18:03.997Z",
+  "generatedAt": "2026-06-13T19:10:25.133Z",
   "results": [
     {
       "algorithm": "heap",
@@ -12,22 +12,22 @@
       "algorithm": "timing_wheel",
       "operation": "bulk_insertion",
       "jobCount": 10000,
-      "durationMs": 1,
-      "opsPerSecond": 10000000
+      "durationMs": 2,
+      "opsPerSecond": 5000000
     },
     {
       "algorithm": "heap",
       "operation": "bulk_extraction",
       "jobCount": 10000,
-      "durationMs": 9,
-      "opsPerSecond": 1111111
+      "durationMs": 16,
+      "opsPerSecond": 625000
     },
     {
       "algorithm": "timing_wheel",
       "operation": "bulk_extraction",
       "jobCount": 10000,
-      "durationMs": 8,
-      "opsPerSecond": 1250000
+      "durationMs": 10,
+      "opsPerSecond": 1000000
     },
     {
       "algorithm": "heap",
@@ -40,8 +40,22 @@
       "algorithm": "timing_wheel",
       "operation": "mixed_workload",
       "jobCount": 10000,
+      "durationMs": 2,
+      "opsPerSecond": 5000000
+    },
+    {
+      "algorithm": "heap",
+      "operation": "update_priority_indexed",
+      "jobCount": 1000,
       "durationMs": 1,
-      "opsPerSecond": 10000000
+      "opsPerSecond": 1000000
+    },
+    {
+      "algorithm": "heap",
+      "operation": "update_priority_linear",
+      "jobCount": 1000,
+      "durationMs": 6,
+      "opsPerSecond": 166667
     }
   ]
 }
