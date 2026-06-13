@@ -1,189 +1,387 @@
-# Stage 9 Job Scheduler — Architecture
+# Stage 9 Job Scheduler — System Architecture
 
-## Overview
+This document details the architecture, process interaction, data models, state machines, and key algorithmic mechanisms of the background job scheduler designed for Dilamme (Stage 9).
 
-A background job scheduler built for Dilamme (Stage 9). Jobs are created via REST API, queued in PostgreSQL, promoted to a ready queue by an independent **scheduler process**, and executed by independent **worker processes**. A React dashboard provides live visibility via Server-Sent Events (SSE).
+---
 
-**Source of truth:** PostgreSQL only. Redis is used exclusively for distributed locks and SSE pub/sub, not for queue storage.
+## 1. System Overview
 
-## Process Architecture
+The Stage 9 Job Scheduler is a distributed, high-performance background processing system. It provides priority-based job execution, Directed Acyclic Graph (DAG) dependency workflows, dead-letter queueing (DLQ), and real-time visualization via a React dashboard.
 
+### Core Architecture Philosophy
+- **Single Source of Truth:** PostgreSQL (via Drizzle ORM) is the absolute authority. All states, scheduled times, logs, and relationships are persisted here. Redis is never used as queue storage.
+- **Fail-Safe Processing:** Processes are independent, stateless, and safe to replicate. The worker uses Redis only for distributed locks to ensure claim-safety and pub/sub for UI events.
+- **Fast-Path Hybrid Scheduling:** In-memory structures (Min-Heap in the scheduler, Timing Wheel in the workers) are mirrors used to accelerate lookup operations, backed by robust database recovery sweeps.
 
-| Process   | Port | Role                                       |
-| --------- | ---- | ------------------------------------------ |
-| API       | 3200 | REST, Swagger, SSE, health checks          |
-| Scheduler | —    | Promote due jobs, aging, DLQ alerts        |
-| Worker    | —    | Claim jobs, timing wheel retries, handlers |
-| Web UI    | 5173 | Dashboard, jobs table, create form, DLQ    |
+---
 
+## 2. High-Level Architecture
 
-## Job Lifecycle
+The system is organized as a pnpm monorepo. It splits responsibility across four execution daemons and three shared utility packages.
 
-Every job follows: **pending → processing → completed / failed / cancelled**
+### Component Port Mapping
 
-- **Scheduled jobs**: stay `pending` in DB until `scheduled_at <= now` (and `awaiting_retry = false`)
-- **DAG jobs**: stay `pending` until all dependencies are `completed`
-- **Retries**: worker schedules delay; on fire → `awaiting_retry = false` → scheduler promotes via heap
-- **DLQ**: after 3 failed attempts, `status = failed`, `in_dlq = true`
-- **Recurring**: on `completed`, timing wheel waits for interval, then releases job to scheduler
+| Process | Network Port | Role |
+| :--- | :--- | :--- |
+| **API Server** | `3200` | REST API, OpenAPI/Swagger docs, SSE Event Stream, health checks |
+| **Scheduler Daemon** | — | Evaluates schedules, handles priority aging, checks DAGs, and triggers DLQ alert jobs |
+| **Worker Daemon(s)** | — | Concurrent job execution, retry/recurring interval O(1) scheduling, and handler runner |
+| **Web UI Client**| `5173` | React Dashboard, live SSE updates, job creator, DLQ manager, dependency picker |
 
-### Cancellation Rules
+### System Architecture Diagram
 
-1. **Pending:** Immediate `status = 'cancelled'`. Job is never promoted to the ready queue.
-2. **Processing:** Set `cancel_requested = true`. Worker checks this flag **before** calling the handler (skips execution) and **after** handler completion (discards result, marks `cancelled`, does not retry). Partial side effects are possible; handlers are idempotent where feasible.
-3. **Completed / Failed / Cancelled:** Cancellation is a no-op.
+```mermaid
+graph TB
+    subgraph Client ["Client Layer"]
+        WebUI["React Dashboard (Vite / App.tsx)"]
+        ClientsAPI["REST API Clients (cURL / HTTP)"]
+    end
 
-## `scheduled_at` Semantics
+    subgraph APIServer ["API Server (Fastify / apps/api)"]
+        APIEndpoints["REST Endpoints (/api/*)"]
+        SSEStream["SSE Event Broker (/api/events)"]
+        Swagger["Swagger UI (/docs)"]
+    end
 
-`scheduled_at` has two meanings depending on state:
+    subgraph Datastores ["Storage & Messaging Layer"]
+        DB[("PostgreSQL Database (Drizzle ORM)")]
+        Redis[("Redis (Pub/Sub & Locks)")]
+    end
 
-| State | Meaning |
-| ----- | ------- |
-| `awaiting_retry = false` | Absolute schedule: promote to ready queue when `scheduled_at <= now` |
-| `awaiting_retry = true` | Delay end time: retry or recurring run fires at this timestamp |
+    subgraph SchedulerProcess ["Scheduler Daemon Process (apps/scheduler)"]
+        SchedulerLoop["Scheduler Loop (~500ms Tick)"]
+        MinHeap["Indexed Min-Heap Mirror (packages/core)"]
+    end
 
-While `awaiting_retry = true`, the job is **not** eligible for promotion or worker claim regardless of `scheduled_at`.
+    subgraph WorkerProcess ["Worker Daemon Process(es) (apps/worker)"]
+        WorkerLoop["Worker Poll Loop (~500ms)"]
+        TimingWheel["Local Timing Wheel (packages/core)"]
+        Handlers["Job Handlers (packages/handlers)"]
+    end
 
-## Hybrid Durability Model (Retries & Recurring)
+    %% Client Interactions
+    WebUI -->|REST Operations| APIEndpoints
+    WebUI <-->|SSE Stream| SSEStream
+    ClientsAPI -->|Job Management| APIEndpoints
 
-Retries and recurring intervals use a **three-layer** design: timing wheel (fast path) + PostgreSQL (durable record) + scheduler sweep (recovery net).
+    %% API Interactions
+    APIEndpoints -->|Read/Write Schema| DB
+    Swagger -->|API Spec| APIEndpoints
 
-```
-Job fails on worker
-    │
-    ├─► DB: awaiting_retry=true, scheduled_at=retryAt (persisted)
-    └─► Worker RAM: timing wheel insert at same retryAt (fast path)
+    %% Scheduler Interactions
+    SchedulerLoop -->|1. Age Priorities| DB
+    SchedulerLoop -->|2. Sync Aged Priorities| MinHeap
+    SchedulerLoop -->|3. Sweep Overdue Delayed Jobs| DB
+    SchedulerLoop -->|4. Promote Due Pending Jobs| DB
+    SchedulerLoop -->|"5. Rebuild Heap (~60s)"| DB
+    SchedulerLoop -->|Publish Promoted Events| Redis
 
-Worker crash / wrong worker / empty wheel
-    │
-    └─► Scheduler tick: releaseOverdueDelayedJobs()
-            WHERE awaiting_retry=true AND scheduled_at <= NOW()
-        → awaiting_retry=false → promoteDueJobs() picks it up
+    %% Worker Interactions
+    WorkerLoop -->|"1. Atomic Claim (FOR UPDATE SKIP LOCKED)"| DB
+    WorkerLoop -->|"2. Acquire Job Lock (NX EX 300)"| Redis
+    WorkerLoop -->|3. Run Handlers| Handlers
+    WorkerLoop -->|4. Register Retries / Recurring| TimingWheel
+    WorkerLoop -->|5. Release Job Lock| Redis
+    WorkerLoop -->|6. Write Logs & Status| DB
+    WorkerLoop -->|Publish Exec Events| Redis
 
-Worker restart
-    │
-    └─► rebuildRetryWheelFromDatabase() from all awaiting_retry rows
-```
+    TimingWheel -->|Fire Delay Elapsed| DB
 
-**Tradeoffs:**
-
-1. **Timing wheel is process-local.** O(1) insert for retry delays, but not shared across workers. PostgreSQL `scheduled_at` is the durable source of truth.
-2. **Scheduler sweep is the safety net.** Runs every tick (~500ms) before promotion. Overdue delayed jobs are released even if no worker wheel entry exists.
-3. **Release is idempotent.** `releaseJobFromRetryDelay`, `releaseRecurringJob`, and the sweep only update rows where `awaiting_retry = true`, so wheel + sweep cannot double-release.
-4. **Multi-worker safe.** Any worker can rebuild the wheel from DB on startup. Execution order still comes from PostgreSQL at claim time.
-
-## Heap-Based Priority Queue (Live Mirror)
-
-Location: `packages/core/src/min-heap.ts` — `IndexedJobHeap`
-
-Comparator order:
-
-1. **Effective priority** (lower = higher priority)
-2. **Scheduled time** (earlier first)
-3. **Creation time** (FIFO tie-break)
-
-### SQL Is the Execution Path; Heap Is the Mirror
-
-Workers claim via `SELECT … FOR UPDATE SKIP LOCKED` ordered by `effective_priority`, `scheduled_at`, `created_at`. The in-memory heap is **not** popped at claim time. It provides:
-
-- O(1) `peekJob()` for heartbeat metrics
-- O(log n) `updatePriority()` after DB aging
-- Benchmark comparisons in `docs/BENCHMARKS.md`
-
-On scheduler startup, the heap is **rebuilt from PostgreSQL** (`in_ready_queue = true` rows). A periodic rebuild every ~60s corrects drift from SQL claims (workers do not notify the heap when they claim jobs).
-
-## Timing Wheel (Retries & Recurring Fast Path)
-
-Location: `packages/core/src/timing-wheel.ts`, owned by **worker process**
-
-Scope: **retry delays (1s, 5s, 25s) and recurring intervals only**. Absolute `scheduled_at` jobs are handled by PostgreSQL + scheduler heap.
-
-Flow:
-
-1. Job fails → worker persists `scheduled_at = retryAt` in DB and inserts into timing wheel at the same timestamp
-2. Wheel fires → `releaseJobFromRetryDelay` (idempotent) → scheduler promotes via heap
-3. Recurring job completes → same pattern with `nextRunAt` persisted in DB
-
-See `docs/BENCHMARKS.md` for heap vs timing wheel tradeoffs.
-
-## Starvation Prevention (Aging)
-
-**Threshold: 30 seconds** (`AGING_INTERVAL_SECONDS`)
-
-Every 30 seconds waiting in `pending`, `effective_priority` decreases by 1, floored at 1. Aging applies to **all pending jobs** except those `awaiting_retry` or `cancel_requested`, including jobs already in the ready queue (`in_ready_queue = true`).
-
-### DB-Authoritative Aging with Indexed Heap Sync
-
-1. Scheduler tick updates `effective_priority` in PostgreSQL first
-2. For jobs in the ready queue, `IndexedJobHeap.updatePriority()` syncs the in-memory mirror in O(log n)
-3. Workers read live `effective_priority` from DB at claim time — no stale ordering
-
-**Limitation:** The heap mirror can drift from claimed jobs until the next periodic rebuild. Execution order is always correct because workers use DB columns, not the heap.
-
-## Retry Backoff with Jitter
-
-
-| Attempt | Base | Jitter (±20%) |
-| ------- | ---- | ------------- |
-| 1       | 1s   | 800ms–1200ms  |
-| 2       | 5s   | 4s–6s         |
-| 3       | 25s  | 20s–30s       |
-
-
-After attempt 3 → DLQ.
-
-## Duplicate Protection
-
-1. PostgreSQL `FOR UPDATE SKIP LOCKED` — atomic claim
-2. Redis `SET job:{id}:lock NX EX 300` — prevents double execution on restart
-
-## Dead-Letter Queue
-
-- Jobs with `in_dlq = true` appear in DLQ UI with full history from `job_logs`
-- Manual retry: `POST /api/dlq/:id/retry`
-- **Alert threshold: 10 jobs** — when count ≥ 10, scheduler triggers `send_dlq_alert` mock email
-- Alert fires **once per threshold crossing**, tracked by Redis key `dlq_alert_sent` (1-hour TTL)
-
-## job_logs (Mandatory)
-
-Every status transition writes to `job_logs` **in the same database transaction** as the `jobs` update. This provides full retry history in the UI (not just `jobs.error`). Retry scheduling logs include `metadata.retryAt`; recurring logs include `metadata.nextRunAt`.
-
-## DAG Workflow
-
-```
-generate_report → upload_file → send_email
+    %% Messaging
+    Redis -->|Pub/Sub Event Broadcast| SSEStream
 ```
 
-Circular dependencies rejected at creation time.
+---
 
-## send_email Idempotency
+## 3. Job Lifecycle & State Machine
 
-The handler uses `jobId` as a deterministic message ID (`msg-id-{jobId}`). Duplicate invocations log and skip re-execution — safe for worker retries after crash.
+Jobs move through a rigid transition pipeline: `pending ➔ processing ➔ completed / failed / cancelled`.
 
-## Live Updates (SSE)
+### Job Transition Rules
+1. **Creation:** A job is born in a `pending` state. If it has parent dependencies, it stays blocked. If it is scheduled for the future, it stays idle.
+2. **Promotion:** Once eligible (`scheduled_at <= now` and all parent dependencies are `completed`), the Scheduler promotes the job (`in_ready_queue = true`).
+3. **Execution:** The Worker claims the promoted job (`status = 'processing'`) and locks it in Redis.
+4. **Rescheduling & Retries:** On failure, the Worker increments `retryCount`. If `retryCount <= maxRetries`, the job status reverts to `pending` with `awaiting_retry = true` and is scheduled with backoff.
+5. **Dead-Letter Queue (DLQ):** If retries are exhausted, the job status changes to `failed` and `in_dlq = true`. It can be manually retried back to `pending`.
+6. **Recurring Runs:** If a job completes and has an `interval` property, the Worker registers the next schedule and sets `awaiting_retry = true`.
+7. **Cancellation:** A job can be cancelled. If it is `pending`, it is cancelled immediately. If `processing`, a cancellation request flag is set, which the worker checks and handles safely.
 
-Redis pub/sub channel `job:events` → API `/api/events` → React `useJobEvents()`.
+### State Transition Diagram
 
-Workers and scheduler publish on every meaningful status change (`processing`, `completed`, `failed`, promotion, retry release). The UI refetches on each job event — no polling loop. If the SSE connection drops, `EventSource` auto-reconnects and the client refetches once on reconnect to catch missed events.
+```mermaid
+stateDiagram-v2
+    [*] --> pending : Job Created (API / Seed)
+    
+    state pending {
+        [*] --> blocked : Dependencies Incomplete
+        [*] --> awaiting_schedule : scheduled_at > now
+        [*] --> eligible : No dependencies AND scheduled_at <= now
+        
+        blocked --> eligible : All dependencies completed
+        awaiting_schedule --> eligible : time >= scheduled_at
+        eligible --> ready : Scheduler Promotes (in_ready_queue = true)
+    }
 
-**VPS / Nginx:** `proxy_buffering off`, long `proxy_read_timeout`, and `X-Accel-Buffering: no` on the SSE route (see `docs/DEPLOYMENT.md`).
+    state processing {
+        ready --> claimed : Worker claim (FOR UPDATE SKIP LOCKED)
+        claimed --> executing : Redis lock acquired
+    }
+    
+    pending --> cancelled : Cancel request received
+    processing --> cancelled : cancel_requested flag true
+    
+    executing --> completed : Success
+    executing --> awaiting_retry : Failure (retryCount < maxRetries)
+    executing --> failed : Failure (retryCount >= maxRetries)
 
-## Structured Logging
+    state awaiting_retry {
+        [*] --> timing_wheel : Inserted in Worker wheel
+        timing_wheel --> eligible : Wheel fires (release retry)
+        timing_wheel --> eligible : Scheduler sweep (failsafe)
+    }
+    
+    completed --> recurring_wait : recurring interval set
+    state recurring_wait {
+        [*] --> timing_wheel_rec : Inserted in Worker wheel
+        timing_wheel_rec --> pending : Wheel fires (next run)
+        timing_wheel_rec --> pending : Scheduler sweep (failsafe)
+    }
+    
+    failed --> dlq : in_dlq = true (Alert if size >= 10)
+    dlq --> pending : Manual retry (POST /api/dlq/:id/retry)
+    
+    completed --> [*]
+    cancelled --> [*]
+    failed --> [*]
+```
 
-Pino JSON with `event`, `jobId`, `timestamp`. ESLint bans `console.log` in source (use Pino only).
+---
 
-## Health Checks
+## 4. Database Schema & Models
 
-- API: `GET /health` → `{ status, db, redis }`
-- Worker/Scheduler: `worker.heartbeat` / `scheduler.heartbeat` every 30s in logs
+Database tables are defined using **Drizzle ORM** in `packages/db`.
 
-## Graceful Shutdown
+### 1. `jobs` Table
+The primary table tracking job configuration, execution state, and scheduler scheduling structures.
 
-Both worker and scheduler handle `SIGTERM`/`SIGINT`:
+| Column | Type | Nullable | Default | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `id` | `uuid` | No | `defaultRandom()` | Primary Key |
+| `type` | `varchar(100)` | No | — | Registered handler job key (e.g. `send_email`) |
+| `payload` | `jsonb` | No | `{}` | Job parameters passed directly to handlers |
+| `priority` | `integer` | No | `2` | Static Priority: `1` (High), `2` (Medium), `3` (Low) |
+| `effectivePriority` | `integer`| No | `2` | Dynamic priority after starvation aging |
+| `status` | `job_status` | No | `'pending'` | Status enum: `pending`, `processing`, `completed`, `failed`, `cancelled` |
+| `retryCount` | `integer` | No | `0` | Number of executed failed runs |
+| `maxRetries` | `integer` | No | `3` | Maximum allowed execution failures before DLQ |
+| `scheduledAt` | `timestamp` | Yes| — | Executed time or delay delay end |
+| `interval` | `job_interval` | Yes| — | Recurring interval enum: `every_1_minute`, `every_5_minutes`, `every_1_hour` |
+| `error` | `text` | Yes| — | String representation of last thrown exception |
+| `inDlq` | `boolean` | No | `false` | True if failed and moved to dead-letter queue |
+| `cancelRequested` | `boolean` | No | `false` | Flag to request active worker abort execution |
+| `inReadyQueue` | `boolean` | No | `false` | True when promoted and ready for worker claim |
+| `awaitingRetry` | `boolean` | No | `false` | True when delayed by timing wheel (ignores scheduler sweep) |
+| `lastPromotedAt` | `timestamp` | Yes| — | Timestamp of last scheduler promotion |
+| `createdAt` | `timestamp` | No | `now()` | Job registration timestamp |
+| `updatedAt` | `timestamp` | No | `now()` | State alteration timestamp |
+| `startedAt` | `timestamp` | Yes| — | Active run claim timestamp |
+| `completedAt` | `timestamp` | Yes| — | Successful processing complete timestamp |
 
-- **Worker:** stops polling, waits up to 30s for current handler, closes DB/Redis
-- **Scheduler:** finishes current tick, closes DB/Redis
+### 2. `job_dependencies` Table
+Tracks dependency rules. A row denotes that `jobId` is blocked until `dependsOnJobId` transitions to `completed`.
 
-## API Documentation
+- **Primary Key:** `(jobId, dependsOnJobId)`
+- **Foreign Keys:** Cascade delete references pointing to `jobs.id`.
 
-Swagger UI: `/docs`
+### 3. `job_logs` Table (Audit Trail)
+Mandatory audit ledger. Every status transition writes a row here **within the same database transaction** as the job update to maintain strict consistency.
+
+- `id`: `uuid` Primary Key
+- `jobId`: `uuid` Reference pointing to `jobs.id` (Cascade delete)
+- `event`: `varchar(50)` (e.g. `job.created`, `job.promoted`, `job.started`, `job.completed`, `job.failed`, `job.cancelled`)
+- `message`: `text` (detailed human-readable description)
+- `metadata`: `jsonb` (contains event parameters like `retryAt`, `nextRunAt`, `effectivePriority`, etc.)
+- `createdAt`: `timestamp` with timezone
+
+---
+
+## 5. Architectural Mechanisms
+
+### A. The Hybrid Scheduling Model (Heap vs. Timing Wheel)
+The scheduler combines two distinct algorithms to balance strict global execution order and highly performant local timers:
+
+#### 1. Indexed Min-Heap Mirror (`packages/core/src/min-heap.ts` ➔ `IndexedJobHeap`)
+Used in the **Scheduler process** to track ready-to-run jobs in memory.
+- **Ordering Comparator:**
+  1. `effectivePriority` (asc: lower priority number runs first)
+  2. `scheduledAt` (asc: earlier times run first)
+  3. `createdAt` (asc: FIFO fallback for tie-breaker)
+- **Efficiency:** The `IndexedJobHeap` maps `jobId ➔ heapIndex` internally in a `Map`. This enables O(log n) decrease-priority/update updates and job removal, alongside O(1) peek.
+- **Drift Sync:** The heap is rebuilt on startup and every ~60 seconds (120 scheduler ticks) from the database to correct drift.
+
+#### 2. Process-Local Timing Wheel (`packages/core/src/timing-wheel.ts` ➔ `TimingWheel`)
+Used in the **Worker processes** to manage short-term delays (retries and recurring runs).
+- **Structure:** 60 slots with a 1-second resolution, plus an overflow list for delays exceeding 60 seconds.
+- **Why Timing Wheel?** It reduces database polling for upcoming tasks, allowing workers to hold retry delays in process-local RAM with O(1) insertion time.
+
+#### 3. Durable Synchronization & Recovery Net
+Because the timing wheel is local to worker RAM, the system includes a fail-safe recovery mechanism:
+1. When a job is delayed, its database column `awaitingRetry` is set to `true`, and its `scheduledAt` is saved.
+2. In every scheduler tick, a sweep runs:
+   ```sql
+   UPDATE jobs
+   SET awaiting_retry = false
+   WHERE awaiting_retry = true AND scheduled_at <= NOW() AND status = 'pending'
+   ```
+3. Re-releasing is idempotent. If a worker timing wheel triggers a release, it updates the database where `awaiting_retry = true`. The scheduler sweep also updates where `awaiting_retry = true`. Both trigger the release safely without duplicates.
+4. On startup, workers rebuild their local timing wheels by fetching all database rows where `awaitingRetry = true`.
+
+---
+
+### B. Starvation Prevention (Priority Aging)
+To prevent high-priority jobs from indefinitely blocking lower-priority jobs, the system implements dynamic priority aging:
+- **Threshold:** 30 seconds (`AGING_INTERVAL_MS`).
+- **Algorithm:** For every 30 seconds a job stays in `pending` (excluding jobs awaiting retries or cancelled), its `effectivePriority` decreases by 1 (which elevates its urgency), floored at `1` (High).
+  $$\text{effectivePriority} = \max(1, \text{priority} - \lfloor\frac{\text{now} - \text{createdAt}}{30\text{ seconds}}\rfloor)$$
+- **Execution:**
+  1. The Scheduler updates the database values periodically via a bulk sweep.
+  2. For jobs already in the ready queue, the Scheduler calls `IndexedJobHeap.updatePriority(job.id, newPriority)` to update the heap in O(log n) time.
+  3. Workers claim jobs by ordering against the database's `effectivePriority` directly, preventing execution of stale orders.
+
+---
+
+### C. Claim Safety & Concurrency Control
+To support multiple concurrent worker processes without duplicate execution, the system employs double-guarantees:
+
+1. **Database Locking (`SELECT FOR UPDATE SKIP LOCKED`):**
+   Workers query the database to claim ready jobs.
+   ```sql
+   UPDATE jobs
+   SET status = 'processing', started_at = NOW(), in_ready_queue = false
+   WHERE id = (
+     SELECT id FROM jobs
+     WHERE status = 'pending' AND in_ready_queue = true AND in_dlq = false AND cancel_requested = false AND awaiting_retry = false
+     ORDER BY effective_priority ASC, scheduled_at ASC NULLS FIRST, created_at ASC
+     FOR UPDATE SKIP LOCKED
+     LIMIT 1
+   )
+   RETURNING *;
+   ```
+   PostgreSQL skips already-locked rows and guarantees that exactly one worker acquires the row atomically.
+
+2. **Redis Distributed Locking:**
+   Once a worker claims a job, it acquires a Redis key `job:{id}:lock` using NX mode (`SET job:id:lock NX EX 300`). This ensures that even if a worker crashes and restarts, or database timeouts occur, no other worker runs the same job payload concurrently.
+
+---
+
+### D. Exponential Backoff with Jitter
+Failed jobs are retried up to 3 times before being sent to the Dead-Letter Queue (DLQ). The delay is calculated with a $\pm 20\%$ jitter:
+
+$$\text{delay} = \text{BaseDelay} \times (1 \pm \text{RandomJitter})$$
+
+| Attempt | Base Delay | Jittered Interval Range |
+| :--- | :--- | :--- |
+| 1 | 1s | 800ms – 1.2s |
+| 2 | 5s | 4.0s – 6.0s |
+| 3 | 25s| 20.0s – 30.0s|
+| 4 | — | Sent to Dead-Letter Queue (DLQ) |
+
+---
+
+### E. Directed Acyclic Graph (DAG) Workflows
+Jobs can form execution graphs (e.g., `generate_report ➔ upload_file ➔ send_email`):
+- **Cycle Prevention:** A Depth-First Search (DFS) cycle-detection algorithm rejects circular dependency lists during job creation.
+- **Dependency Evaluation:** When the Scheduler polls eligible jobs, it checks dependencies using `areDependenciesCompleted(jobId)`. If any parent job is not `completed`, the child job is skipped and remains in `pending` state.
+
+---
+
+### F. Job Cancellation Semantics
+- **Pending Cancel:** If a job has not started, its status is changed immediately to `cancelled` and `inReadyQueue` is set to `false`.
+- **Processing Cancel:** If a worker is running the job, the database field `cancelRequested` is set to `true`.
+  - The worker checks this flag **before execution** (to skip the job handler).
+  - The worker checks the flag **after execution** (discards output, marks the status `cancelled`, and cancels retries or recurring schedules).
+
+---
+
+### G. Live Updates (SSE Pub/Sub)
+Real-time dashboard visualization is achieved using Redis Pub/Sub:
+- State changes publish event objects to the `job:events` Redis channel.
+- The Fastify server listens to this channel and pipes data into an active Server-Sent Events (SSE) route at `/api/events`.
+- React hook `useJobEvents()` listens to the SSE stream and reactively triggers target dataset refetches.
+
+---
+
+## 6. Process Management & Deployment
+
+The production processes are run on virtual machines (VPS) using standard Linux **systemd** services.
+
+### Nginx Routing and SSE Buffering
+Nginx acts as a reverse proxy. Because Nginx buffers upstream responses by default, SSE streams can lag or fail. The Nginx configuration turns off buffering specifically for `/api/events`:
+
+```nginx
+location /api/events {
+    proxy_pass http://127.0.0.1:3200/api/events;
+    proxy_http_version 1.1;
+    proxy_set_header Connection '';
+    proxy_buffering off;
+    proxy_cache off;
+    proxy_read_timeout 86400;
+}
+```
+
+### systemd Service Configuration
+All processes are managed as individual services.
+
+#### 1. API Server (`/etc/systemd/system/stage9-api.service`)
+```ini
+[Unit]
+Description=Stage 9 Job Scheduler - API Server
+After=network.target postgresql.service redis-server.service
+
+[Service]
+Type=simple
+User=stage9
+WorkingDirectory=/opt/stage9
+ExecStart=/usr/bin/pnpm --filter @scheduler/api start
+Restart=always
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target
+```
+
+#### 2. Scheduler Daemon (`/etc/systemd/system/stage9-scheduler.service`)
+```ini
+[Unit]
+Description=Stage 9 Job Scheduler - Scheduler Daemon
+After=network.target postgresql.service redis-server.service
+
+[Service]
+Type=simple
+User=stage9
+WorkingDirectory=/opt/stage9
+ExecStart=/usr/bin/pnpm --filter @scheduler/scheduler start
+Restart=always
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target
+```
+
+#### 3. Worker Daemon (`/etc/systemd/system/stage9-worker.service`)
+```ini
+[Unit]
+Description=Stage 9 Job Scheduler - Worker Daemon
+After=network.target postgresql.service redis-server.service
+
+[Service]
+Type=simple
+User=stage9
+WorkingDirectory=/opt/stage9
+ExecStart=/usr/bin/pnpm --filter @scheduler/worker start
+Restart=always
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target
+```
