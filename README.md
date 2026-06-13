@@ -178,11 +178,46 @@ scripts/
 
 ## Benchmarks
 
+Two separate ways to view benchmark numbers — do not confuse them.
+
+### 1. Run benchmarks and save results (CLI)
+
 ```bash
 pnpm benchmark
 ```
 
-See [docs/BENCHMARKS.md](docs/BENCHMARKS.md) for tradeoffs and results.
+This runs heap vs timing-wheel tests **in memory** (no database, no real jobs). It:
+
+- Prints JSON to the terminal
+- Writes **`docs/benchmark-results.json`** (commit this file for evaluators)
+
+**`docs/BENCHMARKS.md` is not updated automatically.** After running the command, copy the numbers from `benchmark-results.json` into the results table in [docs/BENCHMARKS.md](docs/BENCHMARKS.md) by hand.
+
+### 2. Live API endpoint (requires API running)
+
+`GET /api/benchmarks` runs the same in-memory benchmark **inside the API process** on first request, then caches the result until the API restarts. It does **not** read `benchmark-results.json`.
+
+Start the API first (`pnpm dev:api`), then:
+
+```bash
+curl http://localhost:3200/api/benchmarks
+```
+
+With the web dev server running (Vite proxies `/api` to the API):
+
+```bash
+curl http://localhost:5173/api/benchmarks
+```
+
+Production (replace with your hostname):
+
+```bash
+curl https://yourdomain.duckdns.net/api/benchmarks
+```
+
+You can also open those URLs in a browser or use Swagger at `/docs` — same JSON response. Swagger is optional, not required.
+
+See [docs/BENCHMARKS.md](docs/BENCHMARKS.md) for methodology, tradeoffs, and the results table.
 
 ## Handler Tests
 

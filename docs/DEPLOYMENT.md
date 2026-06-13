@@ -38,7 +38,10 @@ Set in `/opt/stage9/.env`:
 ```
 DATABASE_URL=postgresql://scheduler:your-secure-password@localhost:5432/job_scheduler
 REDIS_URL=redis://localhost:6379
+PUBLIC_API_URL=https://yourdomain.duckdns.net
 ```
+
+`PUBLIC_API_URL` sets the **Production** entry in Swagger's Servers dropdown (no trailing slash). Without it, Swagger defaults to `http://localhost:3200` and Execute calls fail from the browser.
 
 Verify Postgres and Redis:
 
