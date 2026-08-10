@@ -36,7 +36,7 @@ If you previously deployed the four-service blueprint, delete the old `stage9-wo
 
 Migrations run automatically on **`stage9-api` startup** (`scripts/render-start.sh`) because Render free tier does not support `preDeployCommand`. Drizzle only applies pending migrations, so this is safe on every boot.
 
-Build commands use `NODE_ENV=development pnpm install` so TypeScript and other devDependencies are installed (`stage9-shared` sets `NODE_ENV=production`, which would otherwise skip them).
+Build uses `scripts/render-build.sh` / `scripts/render-build-web.sh`. Root `.npmrc` sets `production=false` so TypeScript and other devDependencies still install when Render sets `NODE_ENV=production` from `stage9-shared`.
 
 Fallback — run migrations locally against Neon if startup fails:
 
