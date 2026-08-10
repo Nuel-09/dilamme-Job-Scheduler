@@ -7,7 +7,7 @@
     "dev:worker": "pnpm --filter @scheduler/worker dev",
     "dev:scheduler": "pnpm --filter @scheduler/scheduler dev",
     "dev:web": "pnpm --filter @scheduler/web dev",
-    "build": "pnpm --filter @scheduler/core --filter @scheduler/db --filter @scheduler/handlers --filter @scheduler/api --filter @scheduler/worker --filter @scheduler/scheduler --filter @scheduler/web build",
+    "build": "pnpm -r run build",
     "docker:up": "docker compose up -d --wait",
     "docker:down": "docker compose down",
     "docker:logs": "docker compose logs -f",

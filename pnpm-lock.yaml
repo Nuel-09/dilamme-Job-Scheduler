@@ -57,6 +57,9 @@ importers:
         specifier: ^5.4.0
         version: 5.11.1
     devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.20
       tsx:
         specifier: ^4.19.0
         version: 4.22.4
@@ -79,6 +82,9 @@ importers:
         specifier: ^9.0.0
         version: 9.14.0
     devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.20
       tsx:
         specifier: ^4.19.0
         version: 4.22.4
@@ -138,6 +144,9 @@ importers:
         specifier: ^9.0.0
         version: 9.14.0
     devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.20
       tsx:
         specifier: ^4.19.0
         version: 4.22.4
@@ -175,6 +184,9 @@ importers:
         specifier: ^3.4.0
         version: 3.4.9
     devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.20
       drizzle-kit:
         specifier: ^0.28.0
         version: 0.28.1
@@ -191,6 +203,9 @@ importers:
         specifier: workspace:*
         version: link:../core
     devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.20
       tsx:
         specifier: ^4.19.0
         version: 4.22.4
