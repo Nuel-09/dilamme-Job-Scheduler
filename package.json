@@ -19,6 +19,7 @@
     "benchmark": "pnpm --filter @scheduler/core benchmark",
     "test:handlers": "pnpm --filter @scheduler/handlers test",
     "test:integration": "tsx scripts/integration-test.ts",
+    "start:render": "bash scripts/render-start.sh",
     "lint": "eslint ."
   },
   "engines": {
