@@ -12,6 +12,9 @@ cleanup() {
 
 trap cleanup SIGTERM SIGINT EXIT
 
+echo "Running database migrations..."
+pnpm db:migrate
+
 pnpm --filter @scheduler/worker start &
 pids+=($!)
 

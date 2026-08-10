@@ -17,9 +17,8 @@
 # DuckDNS alone uses A records (VPS IP). Render needs a CNAME to *.onrender.com.
 # Use Cloudflare (free) or Render's .onrender.com URL if DuckDNS CNAME is not possible.
 #
-# FREE TIER: One Web Service runs API + worker + scheduler together. A visit that
-# wakes the API (via /health or the UI) wakes job processing too. Still sleeps
-# when idle — use Starter plan for 24/7 uptime.
+# FREE TIER: One Web Service runs API + worker + scheduler together. preDeployCommand
+# is paid-only on Render, so migrations run in scripts/render-start.sh on boot.
 
 envVarGroups:
   - name: stage9-shared
@@ -51,7 +50,6 @@ services:
     region: frankfurt # change to oregon / singapore if closer to Neon/Upstash
     plan: free
     buildCommand: corepack enable && pnpm install && pnpm build
-    preDeployCommand: pnpm db:migrate
     startCommand: bash scripts/render-start.sh
     healthCheckPath: /health
     envVars:
