@@ -13,9 +13,9 @@
 #
 # CUSTOM DOMAIN (dilamme-jobscheduler.duckdns.org)
 # ------------------------------------------------
-# Add the domain on the *stage9-web* static service in Render.
-# DuckDNS alone uses A records (VPS IP). Render needs a CNAME to *.onrender.com.
-# Use Cloudflare (free) or Render's .onrender.com URL if DuckDNS CNAME is not possible.
+# DuckDNS only accepts an IP (not a URL). Use Render load-balancer IP 216.24.57.1
+# on dilamme-jobscheduler.duckdns.org, then Verify in Render Dashboard.
+# See docs/RENDER.md for the full checklist.
 #
 # FREE TIER: One Web Service runs API + worker + scheduler together. preDeployCommand
 # is paid-only on Render, so migrations run in scripts/render-start.sh on boot.
@@ -61,10 +61,11 @@ services:
 
   # ── Web UI (Static Site) ──────────────────────────────────────────────────
   # Serves React from apps/web/dist. Proxies /api, /docs, /health to stage9-api.
-  # Add custom domain here for dilamme-jobscheduler.duckdns.org (if DNS supports CNAME).
   - type: web
     name: stage9-web
     runtime: static
+    domains:
+      - dilamme-jobscheduler.duckdns.org
     buildCommand: bash scripts/render-build-web.sh
     staticPublishPath: apps/web/dist
     routes:
