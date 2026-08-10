@@ -1,0 +1,92 @@
+# Render Blueprint — Stage 9 Job Scheduler
+# Docs: https://render.com/docs/blueprint-spec
+#
+# HOW AUTO-DEPLOY WORKS
+# ---------------------
+# 1. Push this file to your GitHub repo (root: render.yaml).
+# 2. Render Dashboard → New → Blueprint → connect repo.
+# 3. Render creates all services below and prompts for secrets (sync: false).
+# 4. After that, every push to your linked branch re-deploys changed services.
+#
+# NOT fully automatic on first setup — you must connect the repo once and enter
+# DATABASE_URL (Neon) and REDIS_URL (Upstash) when prompted.
+#
+# CUSTOM DOMAIN (dilamme-jobscheduler.duckdns.org)
+# ------------------------------------------------
+# Add the domain on the *stage9-web* static service in Render.
+# DuckDNS alone uses A records (VPS IP). Render needs a CNAME to *.onrender.com.
+# Use Cloudflare (free) or Render's .onrender.com URL if DuckDNS CNAME is not possible.
+#
+# FREE TIER: One Web Service runs API + worker + scheduler together. A visit that
+# wakes the API (via /health or the UI) wakes job processing too. Still sleeps
+# when idle — use Starter plan for 24/7 uptime.
+
+envVarGroups:
+  - name: stage9-shared
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: LOG_LEVEL
+        value: info
+      - key: DATABASE_URL
+        sync: false # Neon pooled URL: postgresql://...?sslmode=require
+      - key: REDIS_URL
+        sync: false # Upstash: rediss://default:...@....upstash.io:6379
+      - key: PUBLIC_API_URL
+        value: https://dilamme-jobscheduler.duckdns.org
+      - key: DLQ_THRESHOLD
+        value: "10"
+      - key: DLQ_ALERT_EMAIL
+        value: admin@dilamme.com
+      - key: WORKER_POLL_MS
+        value: "500"
+      - key: SCHEDULER_TICK_MS
+        value: "500"
+
+services:
+  # ── Backend (API + worker + scheduler in one Web Service) ─────────────────
+  - type: web
+    name: stage9-api
+    runtime: node
+    region: frankfurt # change to oregon / singapore if closer to Neon/Upstash
+    plan: free
+    buildCommand: corepack enable && pnpm install && pnpm build
+    preDeployCommand: pnpm db:migrate
+    startCommand: bash scripts/render-start.sh
+    healthCheckPath: /health
+    envVars:
+      - fromGroup: stage9-shared
+      - key: API_HOST
+        value: 0.0.0.0
+      - key: NODE_VERSION
+        value: "20"
+
+  # ── Web UI (Static Site) ──────────────────────────────────────────────────
+  # Serves React from apps/web/dist. Proxies /api, /docs, /health to stage9-api.
+  # Add custom domain here for dilamme-jobscheduler.duckdns.org (if DNS supports CNAME).
+  - type: web
+    name: stage9-web
+    runtime: static
+    buildCommand: corepack enable && pnpm install && pnpm --filter @scheduler/web build
+    staticPublishPath: apps/web/dist
+    routes:
+      # API + Swagger + health (must be BEFORE the SPA catch-all)
+      - type: rewrite
+        source: /api/*
+        destination: https://stage9-api.onrender.com/api/*
+      - type: rewrite
+        source: /docs/*
+        destination: https://stage9-api.onrender.com/docs/*
+      - type: rewrite
+        source: /docs
+        destination: https://stage9-api.onrender.com/docs
+      - type: rewrite
+        source: /health
+        destination: https://stage9-api.onrender.com/health
+      # React client-side routes
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
