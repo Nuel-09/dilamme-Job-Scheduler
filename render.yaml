@@ -49,7 +49,7 @@ services:
     runtime: node
     region: frankfurt # change to oregon / singapore if closer to Neon/Upstash
     plan: free
-    buildCommand: corepack enable && pnpm install && pnpm build
+    buildCommand: corepack enable && corepack prepare pnpm@9.15.9 --activate && pnpm install && pnpm build
     startCommand: bash scripts/render-start.sh
     healthCheckPath: /health
     envVars:
@@ -65,7 +65,7 @@ services:
   - type: web
     name: stage9-web
     runtime: static
-    buildCommand: corepack enable && pnpm install && pnpm --filter @scheduler/web build
+    buildCommand: corepack enable && corepack prepare pnpm@9.15.9 --activate && pnpm install && pnpm --filter @scheduler/web build
     staticPublishPath: apps/web/dist
     routes:
       # API + Swagger + health (must be BEFORE the SPA catch-all)
