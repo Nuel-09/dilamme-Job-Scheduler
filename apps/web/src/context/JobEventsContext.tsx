@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from 'react';
 import type { JobEvent } from '../api';
+import { sseEventsUrl } from '../lib/api-origin';
 
 interface SseControlMessage {
   kind: 'connected' | 'heartbeat' | 'error';
@@ -55,20 +56,32 @@ export function JobEventsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    const source = new EventSource('/api/events');
+    const source = new EventSource(sseEventsUrl());
     let connectCount = 0;
+    let heartbeatTimer: ReturnType<typeof setTimeout> | undefined;
 
-    source.onopen = () => setConnected(true);
-    source.onerror = () => setConnected(false);
+    const markAlive = () => {
+      if (heartbeatTimer) clearTimeout(heartbeatTimer);
+      setConnected(true);
+      // Server heartbeats every 15s — allow 3 misses before showing disconnected.
+      heartbeatTimer = setTimeout(() => setConnected(false), 45_000);
+    };
+
+    source.onopen = markAlive;
+    source.onerror = () => {
+      /* EventSource reconnects automatically; heartbeat timeout reflects real loss. */
+    };
 
     source.onmessage = (msg) => {
       try {
         const data = JSON.parse(msg.data) as unknown;
 
         if (isControlMessage(data)) {
+          if (data.kind === 'connected' || data.kind === 'heartbeat') {
+            markAlive();
+          }
           if (data.kind === 'connected') {
             connectCount += 1;
-            setConnected(true);
             if (connectCount > 1) {
               notify({
                 ...RECONNECT_CATCHUP,
@@ -80,6 +93,7 @@ export function JobEventsProvider({ children }: { children: ReactNode }) {
         }
 
         if (isJobEvent(data)) {
+          markAlive();
           notify(data);
         }
       } catch {
@@ -88,6 +102,7 @@ export function JobEventsProvider({ children }: { children: ReactNode }) {
     };
 
     return () => {
+      if (heartbeatTimer) clearTimeout(heartbeatTimer);
       source.close();
       setConnected(false);
     };

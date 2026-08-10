@@ -61,6 +61,8 @@ curl https://stage9-web.onrender.com/health
 
 Open the web URL → sidebar **Live (SSE)** should be green → create a test job.
 
+**SSE on Render:** The static site rewrites `/api/*` for normal requests, but **cannot proxy long-lived SSE streams**. `stage9-web` is built with `VITE_API_ORIGIN=https://stage9-api.onrender.com` so the browser opens `/api/events` directly on the API service (CORS enabled). Redeploy **stage9-web** after changing that variable — it is baked in at build time.
+
 ## Free tier limits
 
 The combined backend service still **sleeps when idle** (~15s wake on first request). Once awake, worker and scheduler run in the same container. Use **Starter** ($7/mo) on `stage9-api` for 24/7 uptime.

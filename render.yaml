@@ -88,3 +88,6 @@ services:
     envVars:
       - key: NODE_VERSION
         value: "20"
+      # SSE must bypass static CDN rewrites — connect directly to the API web service.
+      - key: VITE_API_ORIGIN
+        value: https://stage9-api.onrender.com

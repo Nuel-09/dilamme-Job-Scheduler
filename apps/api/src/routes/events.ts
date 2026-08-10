@@ -17,6 +17,7 @@ export async function eventsRoutes(app: FastifyInstance) {
       'Access-Control-Allow-Origin': '*',
       'X-Accel-Buffering': 'no',
     });
+    reply.raw.flushHeaders?.();
 
     const subscriber = createRedisClient().duplicate();
     let closed = false;
